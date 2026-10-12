@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Dino Seasons Runner</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #1a1a1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            color: #fff;
+        }
+        #gameContainer {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            height: 400px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #uiOverlay {
+            position: absolute;
+            top: 15px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 18px;
+            font-weight: bold;
+            pointer-events: none;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+        }
+        #startMessage {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-size: 22px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px 30px;
+            border-radius: 10px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    <div id="uiOverlay">
+        <div id="seasonText">Estación: Primavera</div>
+        <div id="scoreText">Puntos: 0</div>
+    </div>
+    <div id="startMessage">¡Toca la pantalla o presiona ESPACIO para Jugar!</div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const seasonText = document.getElementById('seasonText');
+    const scoreText = document.getElementById('scoreText');
+    const startMessage = document.getElementById('startMessage');
+
+    // Estado del juego
+    let gameRunning = false;
+    let gameOver = false;
+    let score = 0;
+    let frame = 0;
+
+    // Configuración del Dinosaurio
+    const dino = {
+        x: 80,
+        y: 280,
+        width: 40,
+        height: 50,
+        vy: 0,
+        gravity: 0.8,
+        jumpPower: -14,
+        grounded: true
+    };
+
+    // Obstáculos
+    let obstacles = [];
+    let obstacleTimer = 0;
+
+    // Estaciones
+    const seasons = [
+        { name: "Primavera", bg: "#a8e6cf", ground: "#56ab2f", obstacleColor: "#2e7d32" },
+        { name: "Verano", bg: "#ffaaa5", ground: "#e65100", obstacleColor: "#bf360c" },
+        { name: "Otoño", bg: "#ffd3b6", ground: "#d84315", obstacleColor: "#4e342e" },
+        { name: "Invierno", bg: "#d4f0f0", ground: "#90a4ae", obstacleColor: "#37474f" }
+    ];
+    let currentSeasonIndex = 0;
+
+    // Sistema de Audio Sintetizado (Sin archivos externos)
+    let audioCtx = null;
+
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            playBGM();
+        }
+    }
+
+    function playJumpSound() {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    function playBGM() {
+        if (!audioCtx) return;
+        const notes = [261.63, 293.66, 329.63, 349.23, 392.00]; // Escala C4-G4
+        let noteIndex = 0;
+
+        setInterval(() => {
+            if (gameRunning && !gameOver) {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                osc.frequency.setValueAtTime(notes[noteIndex], audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.2);
+
+                noteIndex = (noteIndex + 1) % notes.length;
+            }
+        }, 300);
+    }
+
+    // Entrada del usuario (Táctil o Teclado)
+    function handleJump() {
+        initAudio();
+        if (!gameRunning) {
+            resetGame();
+            gameRunning = true;
+            startMessage.style.display = 'none';
+        } else if (dino.grounded && !gameOver) {
+            dino.vy = dino.jumpPower;
+            dino.grounded = false;
+            playJumpSound();
+        } else if (gameOver) {
+            resetGame();
+            gameRunning = true;
+            startMessage.style.display = 'none';
+        }
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' || e.code === 'ArrowUp') handleJump();
+    });
+    window.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        handleJump();
+    });
+
+    function resetGame() {
+        score = 0;
+        frame = 0;
+        gameOver = false;
+        obstacles = [];
+        dino.y = 280;
+        dino.vy = 0;
+        currentSeasonIndex = 0;
+        updateUI();
+    }
+
+    function updateUI() {
+        scoreText.innerText = `Puntos: ${Math.floor(score)}`;
+        seasonText.innerText = `Estación: ${seasons[currentSeasonIndex].name}`;
+    }
+
+    // Bucle Principal
+    function update() {
+        if (!gameRunning || gameOver) return;
+
+        frame++;
+        score += 0.1;
+
+        // Cambiar estación cada 150 puntos
+        currentSeasonIndex = Math.floor((score / 150) % seasons.length);
+        updateUI();
+
+        // Física del Dinosaurio
+        dino.vy += dino.gravity;
+        dino.y += dino.vy;
+
+        if (dino.y >= 280) {
+            dino.y = 280;
+            dino.vy = 0;
+            dino.grounded = true;
+        }
+
+        // Generar Obstáculos
+        obstacleTimer++;
+        if (obstacleTimer > Math.max(60, 120 - Math.floor(score / 20))) {
+            obstacles.push({
+                x: 800,
+                y: 290,
+                width: 25 + Math.random() * 15,
+                height: 40 + Math.random() * 20
+            });
+            obstacleTimer = 0;
+        }
+
+        // Mover Obstáculos y Colisiones
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+            let obs = obstacles[i];
+            obs.x -= (6 + score / 100);
+
+            // Colisión AABB
+            if (
+                dino.x < obs.x + obs.width &&
+                dino.x + dino.width > obs.x &&
+                dino.y < obs.y + obs.height &&
+                dino.y + dino.height > obs.y
+            ) {
+                gameOver = true;
+                startMessage.innerHTML = "¡Game Over!<br><small>Toca para Reiniciar</small>";
+                startMessage.style.display = 'block';
+            }
+
+            if (obs.x + obs.width < 0) {
+                obstacles.splice(i, 1);
+            }
+        }
+    }
+
+    function draw() {
+        const season = seasons[currentSeasonIndex];
+
+        // Dibujar Fondo
+        ctx.fillStyle = season.bg;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Dibujar Suelo
+        ctx.fillStyle = season.ground;
+        ctx.fillRect(0, 330, canvas.width, 70);
+
+        // Dibujar Dinosaurio (Estilo Bloque Retro)
+        ctx.fillStyle = "#333";
+        ctx.fillRect(dino.x, dino.y, dino.width, dino.height);
+        // Ojo
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(dino.x + 25, dino.y + 8, 6, 6);
+
+        // Dibujar Obstáculos (Cactus)
+        ctx.fillStyle = season.obstacleColor;
+        obstacles.forEach(obs => {
+            ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+        });
+    }
+
+    function loop() {
+        update();
+        draw();
+        requestAnimationFrame(loop);
+    }
+
+    loop();
+</script>
+</body>
+</html>
